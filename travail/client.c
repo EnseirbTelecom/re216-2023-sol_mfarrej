@@ -27,12 +27,14 @@ int main(int argc, char *argv[]) {
 	int ret = getaddrinfo(argv[1], argv[2], &hints, &result); // renvoie 0 si succès
 	if (ret != 0) {
 		perror("getaddrinfo");
+		freeaddrinfo(result);
       exit(EXIT_FAILURE);
 	}
 	
 	int fd = socket(result->ai_family, result->ai_socktype, result->ai_protocol);
 	if (fd == -1) {
-		perror("socket"); //affiche la valeur de errno 
+		perror("socket"); 
+		freeaddrinfo(result); 
 		exit(EXIT_FAILURE);
 	}
 	
@@ -86,7 +88,10 @@ int main(int argc, char *argv[]) {
 		   while (sent!= sizeof(int)) { //envoi de la taille du message dans un premier temps
 				int ret = write(fd, (char *)&next_msg_size+sent, sizeof(int)-sent); 
 				if (ret == -1) {
-					perror("write"); 
+					perror("write");
+					close(fds[0].fd);
+					close(fds[1].fd);
+					freeaddrinfo(result); 
 					exit(EXIT_FAILURE);
 				}
 	
@@ -128,6 +133,9 @@ int main(int argc, char *argv[]) {
 
 				if (ret == -1) {
 					perror("read");
+					freeaddrinfo(result);
+					close (fds[0].fd);
+					close (fds[1].fd);
 					exit(EXIT_FAILURE);
 				}
 
@@ -141,7 +149,9 @@ int main(int argc, char *argv[]) {
 	}
 	
 	freeaddrinfo(result);
-	close(fd);
+	close (fds[0].fd);
+	close (fds[1].fd);
+
 	return 0;
 	
 }
