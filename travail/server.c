@@ -115,7 +115,8 @@ int main(int argc, char *argv[]) {
 	// Socket creation
 	int listen_fd=socket(AF_INET, SOCK_STREAM, 0);
 	if (listen_fd == -1) {
-		perror("socket"); 
+		perror("socket");
+		close(listen_fd);		
 		exit(EXIT_FAILURE);
 	}
 	
@@ -131,13 +132,15 @@ int main(int argc, char *argv[]) {
 	int ret = bind(listen_fd, (struct sockaddr *)&listening_addr, sizeof(listening_addr));
 	if (ret == -1) {
 		perror("bind"); 
+		close(listen_fd);
 		exit(EXIT_FAILURE);
 	}
 	
 	// Set up socket in listening mode
 	ret = listen(listen_fd,10);
 	if (ret == -1) {
-		perror("listen"); 
+		perror("listen");
+		close(listen_fd); 
 		exit(EXIT_FAILURE);
 	}
 	
@@ -170,7 +173,8 @@ int main(int argc, char *argv[]) {
             socklen_t len = sizeof(client_addr);
 				int new_fd = accept(listen_fd,(struct sockaddr *)&client_addr, &len);
 				if (new_fd == -1) {
-					perror("accept");  
+					perror("accept"); 
+					continue; 
 				}
 			
 				else {
@@ -181,6 +185,12 @@ int main(int argc, char *argv[]) {
 							fds[j].events = POLLIN; //surveille si data dispo en lecture
 							fds[j].revents = 0;
 							break; //on sort du for dès qu'on a trouvé une place
+						}
+						
+						// Surcharge du serveur
+						if ((i == max_conn) && (fds[i].fd != 0)) {
+							printf("Unable to connect : too many connections\n");
+							close(new_fd);
 						}
 					}
 					
@@ -215,8 +225,10 @@ int main(int argc, char *argv[]) {
 					int ret = read(fds[i].fd, (char *)&msg_size+received, to_read-received);				
 					
 					if (ret == -1) {
-						perror("read"); 
-						exit(EXIT_FAILURE); // si break préféré, penser à close et reset fd à 0
+						perror("read");
+						close(listen_fd);
+						free_Clients(&head);
+						exit(EXIT_FAILURE); 
 					}
 					
 					received += ret;   
@@ -232,14 +244,10 @@ int main(int argc, char *argv[]) {
 					//le cast en char* permet de se déplacer octet par octet
 					if (ret == -1) {
 						perror("read"); 
-						exit(EXIT_FAILURE); // si break préféré, penser à close et reset fd à 0
+						close(listen_fd);
+						free_Clients(&head);
+						exit(EXIT_FAILURE); 
 					}
-					
-					/*else if (ret == 0) { //ou bien fds[i].revents == POLLHUP, connexion fermée par le client
-						close(fds[i]);
-						fds[i].fd = 0;
-						break; // 
-					}*/
 					
 					received += ret;   
 				}
