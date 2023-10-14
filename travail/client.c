@@ -38,15 +38,12 @@ int main(int argc, char *argv[]) {
 	
 	ret = connect(fd, result->ai_addr, result->ai_addrlen);
 	if (ret == -1) {
-		perror("connect"); //affiche la valeur de errno 
+		perror("connect");
+		close(fd); 
+		freeaddrinfo(result);
 		exit(EXIT_FAILURE);
 	}
 	
-	struct sockaddr_in addr_local_socket;
-	socklen_t len = sizeof(addr_local_socket);
-	getsockname(fd, (struct sockaddr *)&addr_local_socket, &len);
-	ushort local_port = ntohs(addr_local_socket.sin_port);
-	printf("Local socket port %u\n", local_port);
 	
 	struct pollfd fds[2]; // Un descr. pour l'entrée, l'autre (fd) pour la socket 
 	memset(fds, 0, 2*sizeof(struct pollfd));
@@ -71,7 +68,7 @@ int main(int argc, char *argv[]) {
 
 		if (ret == -1) {
 			perror("poll");
-		   exit(EXIT_FAILURE);
+		   break;
 		}
 
 		if (fds[0].revents & POLLIN) { // Activité sur stdin
@@ -79,7 +76,7 @@ int main(int argc, char *argv[]) {
 		   char buf[256];
 		   if (fgets(buf, sizeof(buf), stdin) == NULL) {
  			   perror("fgets");
- 			   exit(EXIT_FAILURE);
+ 			   break;
 			}
 		   
 		   next_msg_size = strlen(buf);
@@ -98,17 +95,20 @@ int main(int argc, char *argv[]) {
 	
 			sent = 0;
 	
-			while (sent!= next_msg_size) { //envoi de la taille du message dans un premier temps
+			while (sent!= next_msg_size) {
 				int ret = write(fd, buf+sent, next_msg_size-sent);
 				if (ret == -1) {
 					perror("write");  
+					freeaddrinfo(result);
+					close (fds[0].fd);
+					close (fds[1].fd);
 					exit(EXIT_FAILURE);
 				}
 			
 				sent += ret;
 			}
 			
-			printf("Message envoyé. Vous pouvez envoyer un nouveau message :\n");
+			printf("\nMessage envoyé. Vous pouvez envoyer un nouveau message :\n");
     		fflush(stdout);
 			
 		   if (strcmp(buf, "/quit\n") == 0) {

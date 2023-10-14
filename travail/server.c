@@ -264,6 +264,8 @@ int main(int argc, char *argv[]) {
 
 					if (ret == -1) {
 		            perror("write");
+		            free_Clients(&head);
+		            close (listen_fd);
 		            exit(EXIT_FAILURE);
 		       	}
 
