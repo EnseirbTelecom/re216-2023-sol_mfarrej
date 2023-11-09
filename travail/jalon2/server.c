@@ -14,8 +14,6 @@
 #include "common.h"
 #include "msg_struct.h"
 
-#define MAX_CONN 256 // le serveur pourra accpeter un maximum de 255 connections
-
 
 // ============================ Fonctions de gestion de la liste chaînée stockant les informations des clients connectés ============================
 
@@ -47,26 +45,23 @@ Client* create_Client(char* client_pseudo, int client_fd, struct sockaddr_in cli
 	new_Client->next = NULL;
 	    
 	return new_Client;
-	}
+}
 
 
 
 // Cette fonction permet d'ajouter un Client à la chaîne
 void add_Client(Client** head, int client_fd, struct sockaddr_in client_addr, char* client_connection_time) {
-	printf("coucouuuuuuuuu\n");
+
 	Client* new_Client = create_Client("NotDefinedYet", client_fd, client_addr, client_connection_time);
 	// Contrôle d'erreur
 	if (new_Client == NULL) {
 		perror("Failed to create a new client structure");
 		return;
 	}
-	printf("nouvelle structure client crée\n");	
 	// Parcours de la liste pour trouver le dernier noeud
 	Client* current = *head;
 	if (current == NULL){	// si la liste est vide
-		printf("avant l'ajout de la structure en début de chaîne\n");
 		*head = new_Client;
-		printf("après ajout de la structure en début de chaîne\n");
 	}
 	else {
 		// Recherche du dernier noeud
@@ -234,8 +229,7 @@ int handle_send(int client_socket, struct message response_structure, char* payl
 		if(ret == -1)
 			return -1;
 		sent += ret;
-	}
-    
+	}    
     return 0;
 } 
 
@@ -244,9 +238,9 @@ int handle_send(int client_socket, struct message response_structure, char* payl
 // Cette fonction permet de gérer la réception d'envoi par un client en deux temps : La réception de la struct message suivie des octets utiles.
 // Elle renseigne aussi sur le statut de la lecture en retournant "0" en cas de succès, "-1" en cas d'erreur de lecture et "-2" en cas d'erreur lors de l'allocation dynamique de mémoire 
 int handle_receive(int client_socket, struct message* received_structure, char** payload) {
-    
+	
     // Première lecture : la struct message			
-	int to_read = sizeof(received_structure);
+	int to_read = sizeof(struct message);
 	int received = 0;
 	while(received != to_read){
 		int ret = read(client_socket, (char*)received_structure+received, to_read-received);
@@ -259,15 +253,16 @@ int handle_receive(int client_socket, struct message* received_structure, char**
 	// Il n'y a pas de  payload envoyé par le client pour le type NICKNAME_LIST
 	if (received_structure->type == NICKNAME_LIST)
 		return 0;
-				
+	
 	//Deuxième lecture : les octets utiles
 	int payload_size = received_structure->pld_len;
-					
 	// En se basant sur le taille du payload maintenant connue, on alloue dynamiquement de la mémoire pour le payload
-    *payload = (char*)malloc(payload_size);
+   *payload = (char*)malloc(payload_size+1);
 	if (*payload == NULL)
         return -2;
-    
+    memset(*payload, 0, payload_size);
+  
+    (*payload)[payload_size] = '\0';
 	received = 0;
 	while(received != payload_size){
 		int ret = read(client_socket, *payload+received, payload_size-received);
@@ -275,10 +270,9 @@ int handle_receive(int client_socket, struct message* received_structure, char**
 			free(*payload);
 			return -1;
 		}
-	received += ret;
+		received += ret;
 	}
-    
-    return 0;
+	return 0;
 } 
 
 
@@ -301,7 +295,7 @@ int pseudo_exists(Client** head, const char* client_pseudo) {
         current = current->next;
     }
     
-    return 0;
+	return 0;
 }
 
 
@@ -311,49 +305,37 @@ int pseudo_exists(Client** head, const char* client_pseudo) {
 // La fonction retoune 0 en cas de succès et -1 en cas d'erreur
 int handle_nickname_request(Client** head, char* client_pseudo, int client_socket, struct message response_struct){
 	// Cas où le pseudo existe déjà : envoi du flag "1" dans le payload au client
-	if (pseudo_exists(head, client_pseudo)) {
+	if (pseudo_exists(head, client_pseudo) == 1) {
 		response_struct.pld_len = strlen("1");		
 		strcpy(response_struct.infos, "1");
 		int ret = handle_send(client_socket, response_struct, "1");
 			if (ret == -1)
 				return -1;
 		return 0;
-     } else {
-		// Cas où le pseudo contient un caractère spécial : envoi du flag "2" dans le payload au client
-		int special_character_detected = 0;
-		for (int i = 0; i < sizeof(client_pseudo); i++) {
-			if (!isalnum(client_pseudo[i])) {
-            // Parcours du pseudo : Si un caractère n'est ni un chiffre ni une lettre de l'alphabet, c'est un caractère spécial
-            	special_character_detected = 1;
-				break;
-			}
-		}
-
-        if (special_character_detected) {
-			// Envoi du flag d'erreur "2" dans le payload au client
-          	response_struct.pld_len = strlen("2");		
-			strcpy(response_struct.infos, "2");
-          	int ret = handle_send(client_socket, response_struct, "2");
-          	if (ret == -1)
-				return -1;
-			return 0;	
-		} else {
+    } else {
 			// Cas où le pseudo est valable : envoi du flag "0" dans le payload au client
-           	response_struct.pld_len = strlen("0");		
+    		response_struct.pld_len = strlen("0");		
 			strcpy(response_struct.infos, "0");
           	int ret = handle_send(client_socket, response_struct, "0");
           	if (ret == -1)
 				return -1;
 			// Enregistrement du pseudo après parcours de la liste chaînée
 			Client* current = *head;
+			int first_pseudo_flag = 0;
 			while (current != NULL) {
         		if (current->fd == client_socket) {
+        			if (strcmp(current->pseudo, "NotDefinedYet") == 0)
+						first_pseudo_flag = 1;
             		strcpy(current->pseudo, client_pseudo);
+            		
+            		// Affichage de l'information de connexion une fois que le nouveau client a choisi son pseudo
+            		if (first_pseudo_flag == 1)
+            			printf("User %s connected\n", current->pseudo);
         		}
         		current = current->next;
     		}
+    		
 			return 0;
-		}
 	}
 }
 
@@ -422,21 +404,24 @@ int handle_info_request(Client** head, const char* target_pseudo, int seeking_cl
 // La fonction retourne 0 en cas de succès et -1 en cas d'erreur
 int handle_list_request(Client** head, int client_socket, struct message response_struct) {
         // Le buffer contenant la liste des pseudo
-        char buffer_list[NICK_LEN*MAX_CONN];
-        buffer_list[0] = '\0';
+	char buffer_list[NICK_LEN*MAX_CONN];
+    buffer_list[0] = '\0';
 
-        // Parcours de la liste chaînée des Clients et ajout des pseudo au buffer
-		Client* current = *head;
-        while (current != NULL) {
-            strcat(buffer_list, current->pseudo);
-            strcat(buffer_list, ", ");  // Ajout du délimiteur
-            current = current->next;
-        }
-		strcat(buffer_list, ".");
-        // Envoi au client
-        int ret = handle_send(client_socket, response_struct, buffer_list);
+    // Parcours de la liste chaînée des Clients et ajout des pseudo au buffer
+	Client* current = *head;
+    while (current != NULL) {
+	    strcat(buffer_list, current->pseudo);
+        if (current->next != NULL){
+	       	strcat(buffer_list, ", ");  // Ajout du délimiteur
+       	}
+       	current = current->next;
+	}
+	strcat(buffer_list, ".");
+	response_struct.pld_len = strlen(buffer_list);
+	// Envoi au client
+	int ret = handle_send(client_socket, response_struct, buffer_list);
 		
-		return ret;
+	return ret;
 }
 
 
@@ -445,20 +430,36 @@ int handle_list_request(Client** head, int client_socket, struct message respons
 // La fonction retourne 0 en cas de succès et -1 en cas d'erreur
 int handle_broadcast_request(Client** head, int sender_socket, struct message response_struct, char* payload) {
    	
+   	// Récupération du pseudo du client à l'origine du broadcast
+   	char sender_pseudo[NICK_LEN];
+   	strcpy(sender_pseudo, response_struct.nick_sender);
+   	
+   	// Cette chaîne sera à afficher telle quelle par les clients destinataires
+   	// Sa taille est choisie de manière adaptée à la taille maximale des messages avec l'entête "[Nickname] : " pour identifier le client à l'origine de l'envoi
+   	char payload_to_send[strlen(sender_pseudo)+5+INFOS_LEN]; 
+   	strcpy(payload_to_send, "[");
+   	strcat(payload_to_send, sender_pseudo);
+   	strcat(payload_to_send, "] : ");
+   	strcat(payload_to_send, payload);
+   	
+   	response_struct.pld_len = strlen(sender_pseudo)+5+strlen(payload);
+   	
+   	// Envoi du message en broadcast
     Client* current = *head;
     while (current != NULL) {
         // Parcours de la liste chaînée en sautant le client à l'origine de la demande d'envoi
         if (current->fd != sender_socket) {
 			// Envoi au client
-			int ret = handle_send(current->fd, response_struct, payload);
+			int ret = handle_send(current->fd, response_struct, payload_to_send);
 			// Indication de l'échec de l'envoi
 			if (ret == -1)
 				return -1;        
         }
+        
         current = current->next;
     }
     
-    return 0;
+	return 0;
 }
 
 
@@ -483,14 +484,19 @@ int handle_PM_request(Client** head, char* received_info, int sender_socket, str
 	
 	// Parcours de la liste chaînée pour trouver le pseudo du destinataire
     Client* current = *head;
-    while (current != NULL) {
+	while (current != NULL) {
         if (strcmp(current->pseudo, target_pseudo) == 0) {
         	
-        	//Envoi au destinataire
-        	response_struct.pld_len = strlen(info_ptr);		
-			strcpy(response_struct.infos, info_ptr);
-        	
-			int ret = handle_send(current->fd, response_struct, info_ptr);
+        	//Envoi au destinataire du message avec l'entête "[Nickname] : "  qui sera affiché tel quel par le destinataire
+			char payload_to_send[strlen(response_struct.nick_sender)+5+INFOS_LEN]; 
+  			strcpy(payload_to_send, "[");
+   			strcat(payload_to_send, response_struct.nick_sender);
+   			strcat(payload_to_send, "] : ");
+   			strcat(payload_to_send, info_ptr);
+   			
+  			response_struct.pld_len = strlen(response_struct.nick_sender)+5+strlen(info_ptr);
+			
+			int ret = handle_send(current->fd, response_struct, payload_to_send);
 			if (ret == -1)
 				return -1;
 			
@@ -507,10 +513,10 @@ int handle_PM_request(Client** head, char* received_info, int sender_socket, str
     
    	// Cas où le client n'existe pas : Envoi d'un message pertinent au client à l'origine de l'envoi
    	 
-    char response[INFOS_LEN];
-    strcpy(response, "[Server] : User ");
-    strcat(response, target_pseudo);
-    strcat(response, " does not exist\n");
+   	char response[INFOS_LEN];
+   	strcpy(response, "[Server] : User ");
+   	strcat(response, target_pseudo);
+   	strcat(response, " does not exist\n");
     
 	response_struct.pld_len = strlen(response);		
 	strcpy(response_struct.infos, response);
@@ -527,6 +533,11 @@ int handle_PM_request(Client** head, char* received_info, int sender_socket, str
 
 
 int main(int argc, char* argv[]) {
+	
+	if (argc != 2){
+		printf("Please use \"%s <Port number>\" to launch the server.\n", argv[0]);
+		exit(EXIT_FAILURE);
+	}
 	
 	// Création de la socket d'écoute
 	int listen_fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -581,7 +592,6 @@ int main(int argc, char* argv[]) {
 		
 		// Vérification de l'activité au niveau de la socket d'écoute
 		if ( (fds[0].revents & POLLIN) == POLLIN ){				
-			printf("activité recensée\n");
 			// Acceptation de la demande de connexion et création d'une socket client associée
 			struct sockaddr_in client_addr;
 			socklen_t len = sizeof(client_addr);
@@ -591,7 +601,6 @@ int main(int argc, char* argv[]) {
 				perror("accept");
 				continue; 
 			}
-			printf("avant l'ajout daans fds\n");
 			// Ajout de la socket client dans un case vide du tableau et notification du client de l'état de sa demande de connexion
 			int ret = add_client_to_poll(fds, new_fd);
 			// Contrôle d'erreur
@@ -602,31 +611,29 @@ int main(int argc, char* argv[]) {
 				perror("server overloaded");
 				close(new_fd);
 			}
-			printf("APRès l ajout dans le fds\n");
 			// Obtention de la date de connexion du client au format demandé
 			char formatted_time[20];
 			get_connection_time(formatted_time);
-			printf("avant l'ajout dans la liste\n");
 			// Stockage des informations du nouveau client dans la liste chaînée
 			add_Client(&head, new_fd, client_addr, formatted_time);
-			printf("après l'ajout dans la liste\n");
 			//On indique que la demande de connexion a été traitée
 			fds[0].revents = 0;
 		}
 
 		
-
+		
 		// Vérification de l'activité au niveau des sockets clients
 		for(int i = 1; i < MAX_CONN; i++){
 			
 			if (fds[i].fd  != 0){
 				// Traitement en cas de données à lire
 				if( (fds[i].revents & POLLIN) == POLLIN ) {
-				
+					
 					// Première lecture : examen du type du message envoyé
 					struct message received_structure;
 					memset(&received_structure, 0, sizeof(received_structure));
 					
+					// Variable permettant de stocker le payload
 					char* payload_data = NULL;
 					
 					int ret = handle_receive(fds[i].fd, &received_structure, &payload_data);
@@ -639,8 +646,8 @@ int main(int argc, char* argv[]) {
 					
 					enum msg_type request_type = 0;
 					request_type = received_structure.type;
-						
-				// Gestion des demandes de l'utilisateur selon le type du message envoyé
+					
+					// Gestion des demandes de l'utilisateur selon le type du message envoyé
 					switch (request_type)
 					{
 						// Cas d'une demande de définition ou de changement de pseudonyme					
@@ -682,9 +689,6 @@ int main(int argc, char* argv[]) {
 						case ECHO_SEND :
 							// Cas d'une demande de fermeture de connection
 							if (strcmp(payload_data, "/quit") == 0){
-								close(fds[i].fd); 
-								fds[i].fd = 0;
-								remove_Client(&head, fds[i].fd);
 								// Affichage de l'information de déconnexion
 								Client* current = head;
     							while (current != NULL) {
@@ -693,15 +697,27 @@ int main(int argc, char* argv[]) {
         							}
 									current = current->next;
 								}
+								close(fds[i].fd); 
+								fds[i].fd = 0;
+								remove_Client(&head, fds[i].fd);
+								break;
 							}
-							// Cas d'un message normal
-							int ret = handle_send(fds[i].fd, received_structure, payload_data);
+							
+							// Cas d'un echo normal
+							
+							// Cette chaîne sera à afficher telle quelle par les clients destinataires
+							char payload_to_send[received_structure.pld_len+strlen("[Server] : ")]; 
+   							strcpy(payload_to_send, "[Server] : ");
+   							strcat(payload_to_send, payload_data);
+							
+							received_structure.pld_len = received_structure.pld_len + strlen("[Server] : ");
+							// Renvoi du message
+							int ret = handle_send(fds[i].fd, received_structure, payload_to_send);
 							//Contrôle d'erreur
 							if (ret == -1)
 								perror("write");
 							break;
 					}
-					
 					
 					free(payload_data);				
 					//On indique que l'activité au niveau de la socket a été traitée

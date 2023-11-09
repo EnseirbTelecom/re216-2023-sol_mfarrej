@@ -1,5 +1,6 @@
 #define NICK_LEN 20
 #define INFOS_LEN 128
+#define SALON_NAME_LEN 30
 
 enum msg_type { 
 	NICKNAME_NEW,
