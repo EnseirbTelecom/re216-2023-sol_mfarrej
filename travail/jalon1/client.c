@@ -116,8 +116,8 @@ int main(int argc, char *argv[]) {
 			printf("\nMessage envoyé. Vous pouvez envoyer un nouveau message :\n");
     		fflush(stdout);
 			
-		   if (strcmp(buf, "/quit\n") == 0) {
-         	printf("Connexion fermée\n");
+		   	if (strcmp(buf, "/quit\n") == 0) {
+         		printf("Connexion fermée\n");
             break;
          }
 		}
