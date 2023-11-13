@@ -14,9 +14,7 @@
 #include "common.h"
 #include "msg_struct.h"
 
-#define MAX_CHANNELS 10 // Le nombre de salons pouvant exister simultanément
-#define MAX_CLIENTS 100 // Le nombre maximum d'utilisateurs appartenant à un salon
-
+#define MAX_MEMBERS 100 // Le nombre maximum d'utilisateurs appartenant à un salon
 
 // ============================ Fonctions de gestion de la liste chaînée stockant les informations des clients connectés ============================
 
@@ -27,7 +25,7 @@ typedef struct Client {
 	char address[INET_ADDRSTRLEN];  // Adresse IP du client (stockée sous forme de chaîne de caractère lisible)
 	int port;         // Numéro de port utilisé par le client
 	char connection_time[30]; // Date de connexion du client
-	char channel[CHANNEL_NAME_LEN] = {'\0'}; // Nom du salon auquel le client appartient; cette chaîne est vide quand le client n'appartient pas à un salon
+	char channel[CHANNEL_NAME_LEN]; // Nom du salon auquel le client appartient; cette chaîne est vide quand le client n'appartient pas à un salon
 	struct Client* next;  // Pointeur vers le client suivant dans la liste
 } Client;
 
@@ -46,6 +44,7 @@ Client* create_Client(char* client_pseudo, int client_fd, struct sockaddr_in cli
 	inet_ntop(AF_INET, &(client_addr.sin_addr), new_Client->address, INET_ADDRSTRLEN); // conversion de l'adresse IP en une chaîne lisible
 	new_Client->port = ntohs(client_addr.sin_port);
 	strcpy(new_Client->connection_time, client_connection_time);
+	new_Client->channel[0] = '\0';
 	new_Client->next = NULL;
 	    
 	return new_Client;
@@ -79,36 +78,28 @@ void add_Client(Client** head, int client_fd, struct sockaddr_in client_addr, ch
 	new_Client->next = NULL;
 }
 	
-	
-	
+
+
 // Cette fonction permet d'enlever un Client de la liste
-void remove_Client(Client** head, int client_fd) {	
-	Client* previous = NULL;
-	Client* current = *head;
-		
+void remove_Client(Client** head, int client_fd) {
+    Client* current = *head;
+    Client* previous = NULL;
 	// Parcours de la liste pour trouver le client à supprimer
-	while ((current != NULL) && (current->fd != client_fd)) { 
+    while (current != NULL) {
+        if (current->fd == client_fd) {
+            // Cas où le client est le premier noeud de la liste
+            if (previous == NULL)
+                *head = current->next;
+            else
+                previous->next = current->next;
+
+            free(current);
+            return;
+		}
 		previous = current;
 		current = current->next;
-	}    
-		   
-	// Si le Client en question n'existe pas
-	if (current == NULL) {
-		return;
 	}
-	    
-	// Suppression du Client en question
-	if (previous == NULL) // Cas où le client est le premier noeud de la liste
-    	*head = current->next;
-    else
-    	previous->next = current->next;
-		            
-	// Désallocation de mémoire
-    free(current);
-	return;
 }
-
-
 
 // Cette fonction permet de désallouer la liste chaînée
 void free_Clients(Client** head) {
@@ -129,25 +120,29 @@ void free_Clients(Client** head) {
 
 
 // Cette structure permet de representer un salon
-typedef struct {
+typedef struct Channel {
     char name[CHANNEL_NAME_LEN];	// Nom du salon
-    Client* members[MAX_CLIENTS] = NULL;	// Tableau des clients appartenant au salon
+    Client* members[MAX_MEMBERS];	// Tableau des clients appartenant au salon
     int nb_members;	// Nombre d'utilisateurs actuels dans le salon
+	struct Channel* next;
 } Channel;
 
 
 
 // Cette fonction permet de créer une nouveau salon
 Channel* create_Channel(const char* channel_name) {
-    Salon* new_Channel = (Channel*)malloc(sizeof(Channel));
+    Channel* new_Channel = (Channel*)malloc(sizeof(Channel));
     // Contrôle d'erreur
 	if (new_Channel == NULL)
 		return NULL;
 	
 	// Remplissage des informations du salon
     strcpy(new_Channel->name, channel_name);
-    new_Channel->nb_members = 0;
- 
+    for (int i = 0; i < MAX_MEMBERS; i++){ // Initialisation du tableau des membres à NULL
+    	new_Channel->members[i] = NULL;
+    }
+ 	 new_Channel->nb_members = 0;
+ 	 
     return new_Channel;
 }
 
@@ -180,98 +175,107 @@ int add_Channel(Channel** head, const char* channel_name) {
 }
 	
 
-	
 // Cette fonction permet d'enlever un salon de la liste des salons
-void remove_Channel(Channel** head, const char* channel_name) {	
-	Channel* previous = NULL;
-	Channel* current = *head;
-		
-	// Parcours de la liste pour trouver le channel à supprimer
-	while ((current != NULL) && (current->name != channel_name)) { 
+void remove_Channel(Channel** head, const char* channel_name) {
+    Channel* current = *head;
+    Channel* previous = NULL;
+	// Parcours de la liste pour trouver le salon à supprimer
+    while (current != NULL) {
+        if (strcmp(current->name, channel_name) == 0) {
+            // Cas où le salon est le premier noeud de la liste
+            if (previous == NULL)
+                *head = current->next;
+            else
+                previous->next = current->next;
+
+            free(current);
+            return;
+		}
 		previous = current;
 		current = current->next;
-	}    
-		   
-	// Si le salon en question n'existe pas
-	if (current == NULL) {
-		return;
 	}
-	    
-	// Suppression du salon en question
-	if (previous == NULL) // Cas où le salon est le premier noeud de la liste
-    	*head = current->next;
-    else
-    	previous->next = current->next;
-		            
-	// Désallocation de mémoire
-    free(current);
-	return;
 }
 
-
-111 commentaire a mettre
-int add_to_channel(Channel** head_channels, Client* client_structure, int client_socket, char* channel_name, 
-				   Channel* joined_channel){
+// Cette fonction permet d'ajouter un client à un salon. Le client est identifié par le numéro du descripteur de sa socket (un pointeur vers sa structure est aussi donné), et le salon par son nom. 
+// La fonction renseigne également un pointeur vers la structure du salon à rejoindre, qui sera stocké dans le pointeur "joined_channel" donné en argument.
+// Elle retourne 0  en cas de succès de l'ajout, -1 si le salon à rejoindre n'existe pas, -2 si le salon est plein, et -3 si le client appartient déjà au salon en question.
+int add_client_to_channel(Channel** head_channels, Client* client_structure, int client_socket, char* channel_name, 
+				   Channel** joined_channel){
 	
 	Channel* current_channel = *head_channels; 
  	// Parcous de la liste des salons pour trouver le salon à rejoindre
- 	while ( current_ channel != NULL && strcmp(current_channel->name, channel_name)!=0 ) {
-        current_channel = current_channel->next
+ 	while ( current_channel != NULL && strcmp(current_channel->name, channel_name)!=0 ) {
+        current_channel = current_channel->next;
     }
      
- 	if (current_channel == NULL) // Cas où le salon à rejoiundre n'existe
+ 	if (current_channel == NULL) // Cas où le salon à rejoiundre n'existe pas
 		return -1;
-	else if (current_channel->nb_members == MAX_CLIENTS) // Cas où le salon est plein
+	else if (current_channel->nb_members == MAX_MEMBERS) // Cas où le salon est plein
 		return -2;
 		
 	// Le salon existe : La fonction renseigne la structure du salon à rejoindre
-	joined_channel = current_channel;
+	*joined_channel = current_channel;
 	
 	// Parcours du tableau des membres du salon pour vérifier que le client n'appartient pas déjà au salon en question
-	for (int i = 0; i < MAX_CLIENTS; i++){
+	for (int i = 0; i < MAX_MEMBERS; i++){
+		if (current_channel->members[i] == NULL) // Pour n'accéder qu'aux cases non vides
+			continue;
 		if (current_channel->members[i]->fd == client_socket)
 			return -3;	
 	}
 			
 	// Parcours du tableau des membres pour trouver une case vide pour l'ajout du client au salon
-	for (int i = 0; i < MAX_CLIENTS; i++){
+	for (int i = 0; i < MAX_MEMBERS; i++){
 	
 		if (current_channel->members[i] == NULL){ // Case vide trouvée
         			// Ajout du client au salon demande
-        			client_structure->channel = current_channel->name;
-	    			current_channels->members[i] = client_structure;
+        			strcpy(client_structure->channel, current_channel->name);
+	    			current_channel->members[i] = client_structure;
 	    			current_channel->nb_members += 1;
 	    			return 0;
 	   	}
 				
 	}
+	// Case vide non trouvée (le salon est plein)
+	return -2;
 }
 
 
-commentaire a completer
-// Cette fonction permet de retirer un membre d'un salon
-int remove_from_channel(Channel** head, int client_socket, const char* channel_name,
-						 Channel* quit_channel) {	
+
+
+// Cette fonction permet de retirer un membre d'un salon. Le client est identifié par le numéro du descripteur de sa socket (un pointeur vers sa structure est aussi donné), et le salon par son nom. 
+// La fonction renseigne également un pointeur vers la structure du salon à quitter, qui sera stocké dans le pointeur "quit_channel" donné en argument. De même pour la structure du client.
+// Elle retourne 0  en cas de succès de la suppresion, -1 si le salon à quitter n'existe pas, et -2 si le client n'appartient au salon en question.
+int remove_client_from_channel(Channel** head, int client_socket, const char* channel_name,
+						 Channel** quit_channel, Client** client_structure) {	
 	Channel* current = *head;	
 	// Parcours de la liste pour trouver le salon à supprimer
-	while ((current != NULL) && (current->name != channel_name)) { 
+	while (current != NULL && strcmp(current->name, channel_name) != 0 ) { 
 		current = current->next;
-	}    
+	}
 	
-		       
+	if (current== NULL) // Cas où le salon à quitter n'existe pas
+		return -1;
+	
+	// Le salon existe : La fonction renseigne la structure du salon à quitter
+	*quit_channel = current;
+ 	
 	// Parcours et suppression du client de la table des membres du salon en question
-	for (int i = 0; i < MAX_CLIENTS; i++){
+	for (int i = 0; i < MAX_MEMBERS; i++){
+		// On saute les cases vides
+		if (current->members[i] == NULL)
+			continue;
 		if (current->members[i]->fd == client_socket){
-			quit_channel = current;
+			*client_structure = current->members[i]; // La fonction renseigne la structure du client
 			current->nb_members -= 1;
-			free(current->members[i];
 			current->members[i] = NULL;
-			break;
+			return 0;
 		}
 	}     
-	// Désallocation de mémoire
-    free(current);
-	return 0;
+		
+	// Cas où le client n'appartient pas au salon à quitter
+	return -2;
+	
 }
 
 
@@ -286,9 +290,6 @@ void free_Channels(Channel** head) {
 	}
 	*head = NULL;
 }
-
-// A définir dans le main : head_channels et nb_salon
-!!!!!!!
 
 
 //////////////////////////////////////////////////////////////////////////////////////////////
@@ -320,8 +321,9 @@ int handle_bind(int listen_fd, struct sockaddr_in* listening_addr, int server_po
 // Cette fonction permet de gérer l'envoi d'un flag à un client pour le notifier d'un événement, la signification de ce flag étant définie en accord entre le serveur et le cient, et explicitée au cas par cas dans ce programme.
 // Elle retourne 0 en cas de succès et -1 en cas d'erreur
 int handle_flag_send(int client_socket, char* flag){
-	int flag_size = sizeof(char);
+	int flag_size = strlen(flag);
 	int sent = 0;  
+	
 	while (sent!= flag_size) {
 		int ret = write(client_socket, flag+sent, flag_size-sent); 
 		if (ret == -1)
@@ -403,7 +405,6 @@ int handle_send(int client_socket, struct message response_structure, char* payl
 			return -1;
 		sent += ret;
 	}
-	printf("\n\nPAYLOAD ACTUALLY SENT / %s\n\n", payload);
     
     return 0;
 } 
@@ -426,12 +427,11 @@ int handle_receive(int client_socket, struct message* received_structure, char**
 	}
 	
 	// Il n'y a pas de  payload envoyé par le client pour le type NICKNAME_LIST
-	if (received_structure->type == NICKNAME_LIST)
+	if (received_structure->type == NICKNAME_LIST || received_structure->type == MULTICAST_LIST)
 		return 0;
 	
 	//Deuxième lecture : les octets utiles
 	int payload_size = received_structure->pld_len;
-	printf("\nChamp pld_len recu dans handle_receive : %d\n", payload_size);
 	// En se basant sur le taille du payload maintenant connue, on alloue dynamiquement de la mémoire pour le payload
     *payload = (char*)malloc(payload_size+1);
 	if (*payload == NULL)
@@ -439,7 +439,6 @@ int handle_receive(int client_socket, struct message* received_structure, char**
     memset(*payload, 0, payload_size);
   
     (*payload)[payload_size] = '\0';
-    printf("Payload après le memset de handle_receive : %s\n", *payload);
 	received = 0;
 	while(received != payload_size){
 		int ret = read(client_socket, *payload+received, payload_size-received);
@@ -449,9 +448,6 @@ int handle_receive(int client_socket, struct message* received_structure, char**
 		}
 		received += ret;
 	}
-	
-	printf("Payload rempli par handle_receive : %s\n", *payload);
-	printf("Taille du payload recu dans handle_receive : %d\n", (int)strlen(*payload));
     return 0;
 } 
 
@@ -539,120 +535,63 @@ int handle_nickname_request(Client** head, char* client_pseudo, int client_socke
 	
 	
 
-// Cette fonction permet de traiter la demande de rejoindre un salon par un client (avec la commande /join , type MULTICAST_JOIN). 
-// Elle commence par vérifier que le salon en question existe bien, que le salon n'est pas plein, puis que le client n'appartient pas déjà à ce salon. Si ces conditions sont vérifiées, le client est ajouté au salon en quttant automatiquement le salon auquel le client appartient déjà, le cas échéant. 
-// Le contrôle d'erreur avec le client est fait en utilisant un flag qui lui sera renvoyé pour signaler si la demande a été traitée avec succès, ou si une erreur est survenue ainsi que sa nature. Les autres membres du salon sont notifiés de l'arrivée du nouveau client.
-// La fonction retoune 0 en cas de succès et -1 en cas d'erreur 
-int handle_join_request(Channel** head_channels, char* channel_name, Client** head_clients, int sender_socket, struct message response_struct){
- 	  
- 	// Pour stocker les informations du client
-	Channel* client_structure = NULL;
-	char client_pseudo[NICK_LEN];
-	// Pour stocker les informations sur le salon à quitter
-    char old_channel_name[MAX_CHANNEL_LEN];
-    
-    
-    // Parcours de la liste des clients pour trouver la structure du client et en extraire les informations dont le nom du salon à quitter notamment
-    Client* current_client = *head_clients;
-  	while (current_client != NULL){
-  		if (current_client->fd == sender_socket){
-  			client_structure = current_client;
-  			strcpy(client_pseudo, current_client->pseudo);
-        	strcpy(old_channel_name, current_client->channel);
-  		}
-  		current_client = current_client->next;
-  	}
-  	
-  	// Pointeur vers la structure du salon à rejoindre, qui sera renseigné par la fonction add_to_channel
-  	Channel* new_channel = NULL;
-  	
- 	int ret = add_to_channel(head_channels, client_structure, sender_socket, channel_name, new_channel);
- 	 
- 	// Cas où le salon à rejoindre n'existe pas : envoi du flag "2" dans le payload au client
- 	if (ret == -1){
- 		response_struct.pld_len = strlen("2");		
-		strcpy(response_struct.infos, "2");
-		int ret = handle_send(client_socket, response_struct, "2");
-		if (ret == -1)
-			return -1;
-		return 0;
- 	} 
- 	// Cas où le salon est plein : Envoi du flag ¨3"
- 	else if (ret == -2){
- 		response_struct.pld_len = strlen("3");		
-		strcpy(response_struct.infos, "3");
-  		ret = handle_send(sender_socket, response_struct, "3");
-  		if (ret == -1)
-  			return -1;
-  		return 0;
- 	} 
- 	// Cas où le cient appartient déjà au salon en question : Envoi du flag ¨1"
-	else if (ret == -3){
-			response_struct.pld_len = strlen("1");		
-			strcpy(response_struct.infos, "1");
-  			ret = handle_send(sender_socket, response_struct, "1");
-  			if (ret == -1)
-  				return -1;
-  			return 0;	
-	}
- 	
- 	// Cas du succès : Notification du client qu'il a rejoint le salon : Enovi du flag "0"
-	response_struct.pld_len = strlen("0");		
-	strcpy(response_struct.infos, "0");
-	ret = handle_send(sender_socket, response_struct, "0");
-	if (ret == -1)
-		return -1;
+// Cette fonction permet de notifier les membres d'un salon de l'arrivée d'un nouveau membre.
+// Elle retourne 0 en cas de sucès et -1 en cas d'erreur.
+int notify_joined_channel(Channel* channel, int new_member_socket, char* new_member_pseudo, struct message response_struct){
+	// Préparation du message sans l'entête "[channel_name]> INFO> " qui sera ajoutée par les destinataires
+	char payload_to_send[strlen(new_member_pseudo)+strlen(" has joined ")+strlen(channel->name)]; 
+	strcpy(payload_to_send, new_member_pseudo);
+	strcat(payload_to_send, " has joined ");
+	strcat(payload_to_send, channel->name);
+
+	response_struct.pld_len = strlen(payload_to_send);
 	
-	// Notifications des autres membres du salon de l'arrivée du nouveau membre
-	for (int i = 0; i < MAX_CLIENTS; i++){
-		// Exclusion du nouveau membre, identifié par le numéro du descripteur de sa socket
-		if (new_channel->members[i]->fd == sender_socket)
+	for (int i = 0; i < MAX_MEMBERS; i++){
+		// On saute les cases vides
+		if (channel->members[i] == NULL)
 			continue;
-		
-		// Envoi du message avec l'entête "[channel_name]> INFO> " qui sera affiché tel quel par les destinataires
-		char payload_to_send[strlen(current_channel->name)+10 + strlen(sender_pseudo)+strlen(" has joined ")+]strlen(current_channel->name)]; 
-		strcpy(payload_to_send, "[");
-		strcat(payload_to_send, current_channel->name);
-		strcat(payload_to_send, "]> INFO> ");
-		strcat(payload_to_send, sender_pseudo);
-		strcat(payload_to_send, " has joined ");
-		strcat(payload_to_send, current_channel->name);
-		strcat(payload_to_send, "\n");
-
-		response_struct.pld_len = strlen(payload_to_send);
-
-		int ret = handle_send(new_channel->members[i].fd, response_struct, payload_to_send);
+		// Exclusion du nouveau membre, identifié par le numéro du descripteur de sa socket
+		if (channel->members[i]->fd == new_member_socket)
+			continue;
+		// Notification des membres
+		int ret = handle_send(channel->members[i]->fd, response_struct, payload_to_send);
 		if (ret == -1)
 			return -1;
 	}
- 			
-	// Sortie de l'ancien salon et notification des autres membres du salon de la sortie
-	if (strlen(old_channel_name) > 0){
-		// Pointeur vers la structure du salon à quitter, qui sera renseigné par la fonction remove_from_channel
-  		Channel* old_channel = NULL;
-  		
-		// Suppression du client du tableau des membres du salon à quitter
-		remove_from_channel(head_channels, sender_socket, old_channel_name, old_channel);		
-		
-		// Notifications des autres membres du salon de départ
-		for (int i = 0; i < MAX_CLIENTS; i++){
-			// Envoi du message avec l'entête "[channel_name]> INFO> " qui sera affiché tel quel par les destinataires	
-			char payload_to_send[strlen(old_channel_name)+10 + strlen(sender_pseudo)+strlen(" has quit ")+]strlen(old_channel_name)];
-			strcpy(payload_to_send, "[");
-			strcat(payload_to_send, old_channel_name);
-			strcat(payload_to_send, "]> INFO> ");
-			strcat(payload_to_send, sender_pseudo);
-			strcat(payload_to_send, " has quit ");
-			strcat(payload_to_send, old_channel_name);
-			strcat(payload_to_send, "\n")
-			
-			response_struct.pld_len = strlen(payload_to_send);
-			int ret = handle_send(old_channel->members[i].fd, response_struct, payload_to_send);
-			if (ret == -1)
-				return -1;
-		}
-		
+	
+	return 0;
+}
+
+
+
+// Cette fonction permet de notifier les membres d'un salon de la sortie d'un membre.
+// Elle retourne 0 en cas de sucès et -1 en cas d'erreur.
+int notify_quit_channel(Channel* channel, char* client_pseudo, struct message response_struct){
+	
+	// Récupération du nom du salon
+	char channel_name[CHANNEL_NAME_LEN];
+	strcpy(channel_name, channel->name);
+	
+	// Préparation du message avec l'entête "[channel_name]> INFO> " qui sera ajoutée par les destinataires
+	char payload_to_send[strlen(client_pseudo)+strlen(" has quit ")+strlen(channel_name)];
+	strcpy(payload_to_send, client_pseudo);
+	strcat(payload_to_send, " has quit ");
+	strcat(payload_to_send, channel_name);
+
+	response_struct.pld_len = strlen(payload_to_send);
+
+	for (int i = 0; i < MAX_MEMBERS; i++){
+		// On saute les cases vides
+		if (channel->members[i] == NULL)
+			continue;
+		// On exclut le client à l'origine de la demande de déconnexion, identifié par son pseudo
+		if (channel->members[i]->pseudo == client_pseudo)
+			continue;
+		int ret = handle_send(channel->members[i]->fd, response_struct, payload_to_send);
+		if (ret == -1)
+			return -1;
 	}
+
 	return 0;
 }
 
@@ -680,33 +619,246 @@ int handle_create_request(Channel** head, Client** head_clients, int nb_channels
 			if (ret == -1)
 				return -1;
 		return 0;
-     } else {
-			// Cas où le nom n'est pas attribué : création et ajout du client à la liste des salons
-           	int ret = add_Channel(head, channel_name);
-           	if (ret == -1)
-           		return -1; 
-           	nb_channels += 1;
+     }
+     
+     // Cas où le nom n'est pas attribué : création et ajout du client à la liste des salons
+    char old_channel_name[CHANNEL_NAME_LEN];
+    char client_pseudo[NICK_LEN];
+    int ret = add_Channel(head, channel_name);
+	if (ret == -1)
+		return -1; 
+	 nb_channels += 1;
            	
-           	Client* client_structure = NULL;
-           	// Recherche de la structure du client et ajout du client au salon
-           	Client* current_client = *head_clients;
-           	while (current_client != NULL ){
-           		if (current_client->fd === client_socket)
-           			client_structure = current_client;
-           		current_client = current_client->next;
-           	}
-           	
-           	add_to_channel(head, client_structure, client_socket, channel_name, NULL);
-           	
-           	// Notification du client que le salon a été créé et qu'il l'a automatiquement rejoins : Envoi du flag "0"
-           	response_struct.pld_len = strlen("0");		
-			strcpy(response_struct.infos, "0");
-          	ret = handle_send(client_socket, response_struct, "0");
-          	if (ret == -1)
+    Client* client_structure = NULL;
+	// Recherche de la structure du client et ajout du client au salon
+ 	Client* current_client = *head_clients;
+	while (current_client != NULL ){
+		if (current_client->fd == client_socket)
+			client_structure = current_client;
+		current_client = current_client->next;
+	}
+	strcpy(old_channel_name, client_structure->channel);
+	strcpy(client_pseudo, client_structure->pseudo);
+    Channel* joined_channel = NULL;       	
+	
+	ret = add_client_to_channel(head, client_structure, client_socket, channel_name, &joined_channel);
+	
+	if(ret == 0){ 
+		// Sortie de l'ancien salon et notification des autres membres du salon de la sortie
+		if (strlen(old_channel_name) > 0){
+			response_struct.type = MULTICAST_QUIT;
+			// Pointeur vers la structure du salon à quitter, qui sera renseigné par la fonction remove_client_from_channel
+  			Channel* old_channel = NULL;
+  			Client* client_structure = NULL;
+			// Suppression du client du tableau des membres du salon à quitter
+			remove_client_from_channel(head, client_socket, old_channel_name, &old_channel, &client_structure);
+			
+			// Cas où le client qui quitte est le dernier membre du salon : Destruction du salon et notification du client
+			if (old_channel->nb_members == 0){
+				remove_Channel(head, old_channel_name);
+				// Le message avec l'entête "INFO> " qui sera affiché tel quel par le client
+				char payload_to_send[strlen(old_channel_name)+ strlen("You were the last user in this channel,  has been destroyed")];
+				strcpy(payload_to_send, "You were the last user in this channel, ");
+				strcat(payload_to_send, old_channel_name);
+				strcat(payload_to_send, " has been destroyed");
+				
+				response_struct.pld_len = strlen(payload_to_send);
+				int ret = handle_send(client_socket, response_struct, payload_to_send);
+				if (ret == -1)
+					return -1;
+			}
+			// Notification des autres membres du salon de départ
+			int ret = notify_quit_channel(old_channel, client_pseudo, response_struct);
+			if (ret == -1)
 				return -1;
-    		
-			return 0;
-		}
+		}	
+	 	
+ 		// Notification du client que le salon a été créé et qu'il l'a automatiquement rejoins : Envoi du flag "0"
+ 		response_struct.type = MULTICAST_CREATE;
+		response_struct.pld_len = strlen("0");		
+		strcpy(response_struct.infos, "0");
+		ret = handle_send(client_socket, response_struct, "0");
+		if (ret == -1)
+			return -1;
+	}
+    
+	return 0;
+		
+}
+
+
+
+// Cette fonction permet de traiter la demande de sortie d'un salon par un client (avec la commande /quit, type MULTICAST_QUIT. 
+// Le contrôle d'erreur avec le client est fait en utilisant un flag qui sera renvoyé au client pour signaler le succès de sa sortie ou si une erreur est survenue.
+// La fonction retoune 0 en cas de succès et -1 en cas d'erreur
+int handle_quit_request(Channel** head_channels, Client** head_clients, char* channel_name, int client_socket, struct message response_struct){
+
+  	// Récupération du pseudo du client à l'origine de la demande
+   	char client_pseudo[NICK_LEN];
+   	strcpy(client_pseudo, response_struct.nick_sender);
+   	
+  	// Pointeurs vers la structure du salon à quitter et de la structure du client, qui seront renseignés par la fonction remove_client_from_channel
+  	Channel* quit_channel = NULL;
+  	Client* client_structure = NULL;
+ 	int ret = remove_client_from_channel(head_channels, client_socket, channel_name, &quit_channel, &client_structure);
+ 	 
+ 	// Cas où le salon à quitter n'existe pas : envoi du flag "1" dans le payload au client
+ 	if (ret == -1){
+ 		response_struct.pld_len = strlen("1");		
+		strcpy(response_struct.infos, "1");
+		int ret = handle_send(client_socket, response_struct, "1");
+		if (ret == -1)
+			return -1;
+		return 0;
+ 	} 
+ 	// Cas où le cient n'appartient pas au salon en question : Envoi du flag ¨2"
+	else if (ret == -2){
+		response_struct.pld_len = strlen("2");		
+		strcpy(response_struct.infos, "2");
+  		ret = handle_send(client_socket, response_struct, "2");
+  		if (ret == -1)
+  			return -1;
+  		return 0;	
+	}
+ 	// Cas du succès : Marquer la sortie du salon
+ 	strcpy(client_structure->channel, "");
+ 	
+ 	// Cas où le client qui quitte est le dernier membre du salon : Destruction du salon et notification du client
+	if (quit_channel->nb_members == 0){
+		remove_Channel(head_channels, channel_name);
+		
+		// Le message avec l'entête "INFO> " qui sera affiché tel quel par le client
+		char payload_to_send[strlen(channel_name)+ strlen("You were the last user in this channel,  has been destroyed")];
+		strcpy(payload_to_send, "You were the last user in this channel, ");
+		strcat(payload_to_send, channel_name);
+		strcat(payload_to_send, " has been destroyed");
+		
+		response_struct.pld_len = strlen(payload_to_send);
+		int ret = handle_send(client_socket, response_struct, payload_to_send);
+		if (ret == -1)
+			return -1;
+			
+	} else { // Notification du client du succès de son départ : Envoi du flag 0
+		response_struct.pld_len = strlen("0");		
+		strcpy(response_struct.infos, "0");
+  		ret = handle_send(client_socket, response_struct, "0");
+  		if (ret == -1)
+  			return -1;
+	}
+ 	
+ 	// Notification des autres membres du départ	
+	ret = notify_quit_channel(quit_channel, client_pseudo, response_struct);
+	if (ret == -1)
+		return -1;
+	
+	return 0;
+}
+
+
+
+// Cette fonction permet de traiter la demande de rejoindre un salon par un client (avec la commande /join , type MULTICAST_JOIN). 
+// Elle commence par vérifier que le salon en question existe bien, que le salon n'est pas plein, puis que le client n'appartient pas déjà à ce salon. Si ces conditions sont vérifiées, le client est ajouté au salon en quttant automatiquement le salon auquel le client appartient déjà, le cas échéant. 
+// Le contrôle d'erreur avec le client est fait en utilisant un flag qui lui sera renvoyé pour signaler si la demande a été traitée avec succès, ou si une erreur est survenue ainsi que sa nature. Les autres membres du salon sont notifiés de l'arrivée du nouveau client.
+// La fonction retoune 0 en cas de succès et -1 en cas d'erreur 
+int handle_join_request(Channel** head_channels, char* channel_name, Client** head_clients, int sender_socket, struct message response_struct){
+ 	  
+ 	// Pour stocker les informations du client
+	Client* client_structure = NULL;
+	char client_pseudo[NICK_LEN];
+	// Pour stocker les informations sur le salon à quitter
+    char old_channel_name[CHANNEL_NAME_LEN];
+    
+    // Parcours de la liste des clients pour trouver la structure du client et en extraire les informations dont le nom du salon à quitter notamment
+    Client* current_client = *head_clients;
+  	while (current_client != NULL){
+  		if (current_client->fd == sender_socket){
+  			client_structure = current_client;
+  			strcpy(client_pseudo, current_client->pseudo);
+        	strcpy(old_channel_name, current_client->channel);
+  		}
+  		current_client = current_client->next;
+  	}
+  	
+  	// Pointeur vers la structure du salon à rejoindre, qui sera renseigné par la fonction add_client_to_channel
+  	Channel* new_channel = NULL;
+  	
+ 	int ret = add_client_to_channel(head_channels, client_structure, sender_socket, channel_name, &new_channel);
+ 	 
+ 	// Cas où le salon à rejoindre n'existe pas : envoi du flag "2" dans le payload au client
+ 	if (ret == -1){
+ 		response_struct.pld_len = strlen("2");		
+		strcpy(response_struct.infos, "2");
+		ret = handle_send(sender_socket, response_struct, "2");
+		if (ret == -1)
+			return -1;
+		return 0;
+ 	} 
+ 	// Cas où le salon est plein : Envoi du flag ¨3"
+ 	else if (ret == -2){
+ 		response_struct.pld_len = strlen("3");		
+		strcpy(response_struct.infos, "3");
+  		ret = handle_send(sender_socket, response_struct, "3");
+  		if (ret == -1)
+  			return -1;
+  		return 0;
+ 	} 
+ 	// Cas où le cient appartient déjà au salon en question : Envoi du flag ¨1"
+	else if (ret == -3){
+		response_struct.pld_len = strlen("1");		
+		strcpy(response_struct.infos, "1");
+  		ret = handle_send(sender_socket, response_struct, "1");
+  		if (ret == -1)
+  			return -1;
+  		return 0;	
+	} else { // Cas du succès
+	
+		// Sortie de l'ancien salon et notification des autres membres du salon de la sortie
+		if (strlen(old_channel_name) > 0){
+			response_struct.type = MULTICAST_QUIT;
+			// Pointeur vers la structure du salon à quitter, qui sera renseigné par la fonction remove_client_from_channel
+  			Channel* old_channel = NULL;
+  			Client* client_structure = NULL;
+			// Suppression du client du tableau des membres du salon à quitter
+			remove_client_from_channel(head_channels, sender_socket, old_channel_name, &old_channel, &client_structure);
+			
+			// Cas où le client qui quitte est le dernier membre du salon : Destruction du salon et notification du client
+			if (old_channel->nb_members == 0){
+				
+				remove_Channel(head_channels, old_channel_name);
+		
+				// Le message avec l'entête "INFO> " qui sera affiché tel quel par le client
+				char payload_to_send[strlen(old_channel_name)+ strlen("You were the last user in this channel,  has been destroyed")];
+				strcpy(payload_to_send, "You were the last user in this channel, ");
+				strcat(payload_to_send, old_channel_name);
+				strcat(payload_to_send, " has been destroyed");
+				
+				response_struct.pld_len = strlen(payload_to_send);
+				int ret = handle_send(sender_socket, response_struct, payload_to_send);
+				if (ret == -1)
+					return -1;
+			}
+			// Notification des autres membres du salon de départ
+			int ret = notify_quit_channel(old_channel, client_pseudo, response_struct);
+			if (ret == -1)
+				return -1;
+		}	
+	 	
+ 		// Notification du client qu'il a rejoint le salon : Enovi du flag "0"
+ 		response_struct.type = MULTICAST_JOIN;
+		response_struct.pld_len = strlen("0");		
+		strcpy(response_struct.infos, "0");
+		ret = handle_send(sender_socket, response_struct, "0");
+		if (ret == -1)
+			return -1;
+	
+		// Notification des autres membres du salon de l'arrivée du nouveau membre
+		int ret = notify_joined_channel(new_channel, sender_socket, client_pseudo, response_struct);
+ 		if (ret == -1)
+ 			return -1;		
+ 	}
+ 	
+	
+	return 0;
 }
 
 
@@ -801,7 +953,7 @@ int handle_list_request(Client** head, int client_socket, struct message respons
 // La fonction retourne 0 en cas de succès et -1 en cas d'erreur
 int handle_channel_list_request(Channel** head, int client_socket, struct message response_struct) {
         // Le buffer contenant la liste des noms de salons
-        char buffer_list[CHANNEL_NAME_LEN*MAX_CHANNEL];
+        char buffer_list[CHANNEL_NAME_LEN*MAX_CHANNELS];
         buffer_list[0] = '\0';
 
         // Parcours de la liste chaînée des salons et ajout des noms au buffer
@@ -873,35 +1025,34 @@ int handle_broadcast_request(Client** head, int sender_socket, struct message re
 // La fonction retourne 0 en cas de succès et -1 en cas d'erreur
 int handle_channel_send_request(Channel** head, int sender_socket, struct message response_struct, char* payload) {
    	
-   	// Récupération du pseudo du client à l'origine de l'envoi
-   	char sender_pseudo[NICK_LEN];
-   	strcpy(sender_pseudo, response_struct.nick_sender);
+   	response_struct.pld_len = strlen(payload);
    	
-   	// Cette chaîne sera à afficher telle quelle par les clients du salon
-   	// Sa taille est choisie de manière adaptée à la taille maximale des messages avec l'entête "nickname> : " pour identifier le client à l'origine de l'envoi
-   	char payload_to_send[strlen(sender_pseudo)+4+INFOS_LEN]; 
-   	strcpy(payload_to_send, sender_pseudo);
-   	strcat(payload_to_send, "> : ");
-   	strcat(payload_to_send, payload);
-   	
-   	response_struct.pld_len = strlen(sender_pseudo)+4+strlen(payload);
+   	// Récupération du nom du salon auquel appartient le client
+   	char channel_name[CHANNEL_NAME_LEN];
+	strcpy(channel_name, response_struct.infos);
    	
    	// Parcours de la liste des salons pour trouver celui auquel appartient le client
    	Channel* current_channel = *head;
 	while (current_channel != NULL) {
-		
     	if (strcmp(current_channel->name, channel_name) == 0) {
-    		// Envoi du message à tous les membres du salon
+    		// Envoi du message à tous les membres du salon sauf celui à l'origine de l'envoi
     		Client* current_member = NULL;
-    		for (int i = 0; i < current_channel->nb_members; i++){
+    		for (int i = 0; i < MAX_MEMBERS; i++){
+				// On saute les cases vides
+				if (current_channel->members[i] == NULL)
+					continue;
+				// On excus le client à l'origine de l'envoi
+				if (current_channel->members[i]->fd == sender_socket)
+					continue;
 				current_member = current_channel->members[i];				    			
-    			int ret = handle_send(current_member->fd, response_struct, payload_to_send);
+    			int ret = handle_send(current_member->fd, response_struct, payload);
 				if (ret == -1)
 					return -1;
     		}
         }
-        current_channel = current_channel->next;
-    } 
+		current_channel = current_channel->next;
+     }
+     
     return 0;
 }
 
@@ -938,9 +1089,7 @@ int handle_PM_request(Client** head, char* received_info, int sender_socket, str
    			strcat(payload_to_send, info_ptr);
    			
    			response_struct.pld_len = strlen(response_struct.nick_sender)+5+strlen(info_ptr);
-			printf("\n\nPAYLOAD TO BE SENT TO %s : %s", target_pseudo, payload_to_send);
-   			printf("SIZE OF PAYLOAD TO BE SENT : %d\n\n", response_struct.pld_len);
-   			
+
 			int ret = handle_send(current->fd, response_struct, payload_to_send);
 			if (ret == -1)
 				return -1;
@@ -973,68 +1122,6 @@ int handle_PM_request(Client** head, char* received_info, int sender_socket, str
     return 0;
 }
 	
-
-
-// Cette fonction permet de traiter la demande de sortie d'un salon par un client (avec la commande /quit, type MULTICAST_QUIT. 
-// Le contrôle d'erreur avec le client est fait en utilisant un flag qui sera renvoyé au client pour signaler le succès de sa sortie ou si une erreur est survenue.
-// La fonction retoune 0 en cas de succès et -1 en cas d'erreur
-int handle_quit_request(Channel** head, Client** head_clients, int nb_channels, char* channel_name, int client_socket, struct message response_struct){
-
-	Channel** head, int client_socket, const char* channel_name,
-						 Channel* quit_channel)
-	
-	
-	
-	
-	
-	
-	// Cas où le serveur est surchargé : envoi du flag "2" dans le payload du client
-	if (nb_channels == MAX_CHANNELS){
-		response_struct.pld_len = strlen("2");		
-		strcpy(response_struct.infos, "2");
-		int ret = handle_send(client_socket, response_struct, "2");
-			if (ret == -1)
-				return -1;
-		return 0;
-	}
-		
-	// Cas où le nom de salon est déjà attribué : envoi du flag "1" dans le payload au client
-	if (channel_name_exists(head, channel_name) == 1) {
-		response_struct.pld_len = strlen("1");		
-		strcpy(response_struct.infos, "1");
-		int ret = handle_send(client_socket, response_struct, "1");
-			if (ret == -1)
-				return -1;
-		return 0;
-     } else {
-			// Cas où le nom n'est pas attribué : création et ajout du client à la liste des salons
-           	int ret = add_Channel(head, channel_name);
-           	if (ret == -1)
-           		return -1; 
-           	nb_channels += 1;
-           	
-           	Client* client_structure = NULL;
-           	// Recherche de la structure du client et ajout du client au salon
-           	Client* current_client = *head_clients;
-           	while (current_client != NULL ){
-           		if (current_client->fd === client_socket)
-           			client_structure = current_client;
-           		current_client = current_client->next;
-           	}
-           	
-           	add_to_channel(head, client_structure, client_socket, channel_name, NULL);
-           	
-           	// Notification du client que le salon a été créé et qu'il l'a automatiquement rejoins : Envoi du flag "0"
-           	response_struct.pld_len = strlen("0");		
-			strcpy(response_struct.infos, "0");
-          	ret = handle_send(client_socket, response_struct, "0");
-          	if (ret == -1)
-				return -1;
-    		
-			return 0;
-		}
-}
-
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -1082,8 +1169,11 @@ int main(int argc, char* argv[]) {
 	fds[0].events = POLLIN;
 	fds[0].revents = 0;
 	
-	// Pointeur vers la tête de la liste des CLients (premier noeud)
+	// Pointeurs vers la tête de la liste des Clients et la liste des salons (premier noeud)
 	Client* head = NULL;
+	Channel* head_channels = NULL;
+	
+	int nb_channels = 0; // Nombre de salons existant simultanément
 	
 	printf("Server online - Waiting for a connection\n");
 	
@@ -1154,11 +1244,8 @@ int main(int argc, char* argv[]) {
 					enum msg_type request_type = 0;
 					request_type = received_structure.type;
 					
-					printf("\n\nA la réception; champ type : %d\n", received_structure.type);
-					printf("A la réception; champ pld_len : %d\n", received_structure.pld_len);
-					printf("A la réception; champ infos : %s\n", received_structure.infos);
-					printf("A la réception; payload : %s\n\n", payload_data);
-					
+					// Buffer pour le type ECHO_SEND
+					char echo_buffer[received_structure.pld_len+strlen("[Server] : ")]; 
 				// Gestion des demandes de l'utilisateur selon le type du message envoyé
 					switch (request_type)
 					{
@@ -1200,7 +1287,7 @@ int main(int argc, char* argv[]) {
 						
 						case ECHO_SEND :
 							// Cas d'une demande de fermeture de connection
-							if (strcmp(payload_data, "/quit") == 0){
+							if (strcmp(payload_data, "/quit") == 0 || strcmp(payload_data, "/quit ") == 0){
 								// Affichage de l'information de déconnexion
 								Client* current = head;
     							while (current != NULL) {
@@ -1209,22 +1296,55 @@ int main(int argc, char* argv[]) {
         							}
 									current = current->next;
 								}
+								remove_Client(&head, fds[i].fd);
 								close(fds[i].fd); 
 								fds[i].fd = 0;
-								remove_Client(&head, fds[i].fd);
 								break;
-							}
-							
+							}							
 							// Cas d'un echo normal
 							
 							// Cette chaîne sera à afficher telle quelle par les clients destinataires
-							char payload_to_send[received_structure.pld_len+strlen("[Server] : ")]; 
-   							strcpy(payload_to_send, "[Server] : ");
-   							strcat(payload_to_send, payload_data);
+   							strcpy(echo_buffer, "[Server] : ");
+   							strcat(echo_buffer, payload_data);
 							
 							received_structure.pld_len = received_structure.pld_len + strlen("[Server] : ");
 							// Renvoi du message
-							int ret = handle_send(fds[i].fd, received_structure, payload_to_send);
+							int ret = handle_send(fds[i].fd, received_structure, echo_buffer);
+							//Contrôle d'erreur
+							if (ret == -1)
+								perror("write");
+							break;
+						// Cas d'une demande de création de salon	
+						case MULTICAST_CREATE :
+							ret = handle_create_request(&head_channels, &head, nb_channels, payload_data, fds[i].fd, received_structure);
+							//Contrôle d'erreur
+							if (ret == -1)
+								perror("write");
+							break;
+						// Cas d'une demande de la liste des salons existants
+						case MULTICAST_LIST :
+							ret = handle_channel_list_request(&head_channels, fds[i].fd, received_structure);
+							//Contrôle d'erreur
+							if (ret == -1)
+								perror("write");
+							break;
+						// Cas d'une demande de rejoindre un salon
+						case MULTICAST_JOIN :
+							ret = handle_join_request(&head_channels, payload_data, &head, fds[i].fd, received_structure);
+							//Contrôle d'erreur
+							if (ret == -1)
+								perror("write");
+							break;
+						// Cas d'une demanade d'envoi de message dans un salon	
+						case MULTICAST_SEND :
+							ret = handle_channel_send_request(&head_channels, fds[i].fd, received_structure, payload_data); 
+							//Contrôle d'erreur
+							if (ret == -1)
+								perror("write");
+							break;
+						// Cas d'une demande de sortie d'un salon 	
+						case MULTICAST_QUIT :
+							ret = handle_quit_request(&head_channels, &head, payload_data, fds[i].fd, received_structure);
 							//Contrôle d'erreur
 							if (ret == -1)
 								perror("write");
@@ -1236,12 +1356,11 @@ int main(int argc, char* argv[]) {
 					fds[i].revents = 0;
 					}
 			
-					// Si la connection a été fermée sans demande explicite de la part de l'utilisateur, on ferme la socket client et on renseigne sa place dans le tableau comme vide. On enlève également le client de la liste chaînée.
-					if( (fds[i].revents & POLLHUP) == POLLHUP ) {
+					// Si la connection a été fermée sans demande explicite de la part de l'utilisateur, on l'enlève de la liste chaînée, on ferme la socket client et on renseigne sa place dans le tableau comme vide.
+					if( (fds[i].revents & POLLHUP) == POLLHUP ) {	
+						remove_Client(&head, fds[i].fd);
 						close(fds[i].fd); 
 						fds[i].fd = 0;
-					
-						remove_Client(&head, fds[i].fd);
 						
 						// Affichage de l'information de déconnexion
 						Client* current = head;
@@ -1259,8 +1378,9 @@ int main(int argc, char* argv[]) {
 
 		}
 
-	// Désallocation de la liste chaînée
+	// Désallocation des listes chaînée
 	free_Clients(&head);
+	free_Channels(&head_channels);
 	// Femeture de la socket du serveur
 	close(listen_fd);
 	

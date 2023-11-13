@@ -102,28 +102,36 @@ int valid_format(enum msg_type type, char *user_input) {
 			// Recherche de l'espace séparant le pseudo du message
 	      	int idx_input = strlen("/msg "), idx_name = 0;
 		  	int target_name_size = 0; 
-		  	char name[NICK_LEN];
+		  	char name[256]; // Allocation d'une taille plus grand que la taille maximale permise pour prendre en compte le cas où l'utilisateur écrit un pseudo trop long en premier argument de la commande
+		  	name[0] = '\0';
 		  	while (user_input[idx_input] != ' ' && user_input[idx_input] != '\0') {
 		  		name[idx_name] = user_input[idx_input];
 				target_name_size += 1; 
 				idx_input += 1;
 				idx_name += 1;
 			}
-					
+			
+			
 			// Cas de la donnée d'une chaîne sans aucun espace après "/msg "
 			if (target_name_size > NICK_LEN){
 				printf("[Server] : The provided nickname exceeds the maximum length of %d characters. Please try again.\n", INFOS_LEN);
 	      		return -1;
 			}
-			
-			if (user_input[idx_input] == ' ' && user_input[idx_input+1] == '\0'){
-				idx_input += 1;  // Pour passer au message après l'espace
+			name[target_name_size] = '\0';
+	
+			if (user_input[idx_input] == ' '){
+				idx_input += 1;  // Pour passer au message après l'espace	
 			}
-			
-			else if (user_input[idx_input] == '\0' || user_input[idx_input+1] == '\0'){ // Cas de l'absence de message 
+			else if (user_input[idx_input] == '\0'){ // Cas de l'absence de message , sans espace après le pseudo
 				printf("[Server] : No message provided. Please use \"/msg <nickname> <message>\".\n");
 				return -1;
-			}	
+			}
+			
+			if (strlen(user_input) - strlen("/msg ") - strlen(name) -1 == 0){ // Cas de l'absence de message , avec espace après le pseudo
+				printf("[Server] : No message provided. Please use \"/msg <nickname> <message>\".\n");
+				return -1;	
+			}
+				
 			// Contrôle de taille du message
 			if (strlen(user_input) - strlen("/msg ") - strlen(name) > INFOS_LEN) {
 	        	printf("[Server] : The provided message exceeds the maximum length of %d characters. Please try again.\n", INFOS_LEN);
@@ -175,8 +183,6 @@ int valid_format(enum msg_type type, char *user_input) {
 		  		return -1;
 		  	}
 			
-			break;
-			
 			// Vérification que le channel_name ne contient pas un caractère spécial
 			for (int i = 0; i < strlen(user_input + strlen("/create ")); i++) {
 				if (!isalnum( *(user_input + strlen("/create ") + i) )) {
@@ -186,6 +192,7 @@ int valid_format(enum msg_type type, char *user_input) {
 				}
 			}
 		
+			break;
 			
 		case MULTICAST_LIST:
 			// Commandes acceptées : "/channel_list", "/channel_list ", "/channel_list <quelque chose>"
@@ -245,23 +252,17 @@ int valid_format(enum msg_type type, char *user_input) {
 		
 		case MULTICAST_QUIT:
 		
-		/*  Tests implicitement vérifiés dans prepare_message normalement
-			
 			if ( (strcmp(user_input, "/quit") == 0) || (strcmp(user_input, "/quit ") == 0) ) {
-			// L'utilisateur n'a pas renseigné de nom de salon après "/quit "
-			   	printf("[Server] : Channel name not provided. Please use \"/join <channel_name>\".\n");
+				// L'utilisateur n'a pas renseigné de nom de salon après "/quit "
+			   	printf("[Server] : Channel name not provided. Please use \"/quit <channel_name>\".\n");
 		  		return -1;
 		  	}
-		
-		
 		
 			if (*(user_input + strlen("/quit")) != ' ') {
 			// L'utilisateur n'a pas inséré d'espace après "/quit"
 				printf("[Server] : Please add a space between \"/quit\" and the channel name.\n");
 		   		return -1;
 		  	}    
-		
-		*/////////////
 			
 			
 			if (strlen(user_input) - strlen("/quit ") > CHANNEL_NAME_LEN) {
@@ -281,14 +282,7 @@ int valid_format(enum msg_type type, char *user_input) {
 				}
 			}
 
-		/////////////////////////////////////////////////////////////////////
-		/////////////////////////////////////////////////////////////////////
-
-
-
-	}
-    
-			
+	}	
    	return 0; // Format et longueur valides
 }
 
@@ -307,8 +301,16 @@ const char* get_command_string(enum msg_type type) {
             return "/whois ";
         case NICKNAME_LIST:
             return "/who ";
+        case MULTICAST_CREATE:
+            return "/create ";
+        case MULTICAST_JOIN:
+            return "/join ";
+        case MULTICAST_QUIT:
+            return "/quit ";
+        case MULTICAST_LIST:
+            return "/channel_list ";
         default:
-            return ""; // Pour le cas ECHO_SEND où il n'y a pas de préfixe
+            return ""; // Pour le cas ECHO_SEND et MULTICAST_SEND où il n'y a pas de préfixe    
     }
 }
 
@@ -352,11 +354,10 @@ int prepare_message(struct message *msg, char *user_input, const char *nick_send
    		type = MULTICAST_JOIN;		
    	
    	else if ( strncmp(user_input, "/quit", strlen("/quit")) == 0 || strncmp(user_input, "/quit ", strlen("/quit ")) == 0 ) {// FAIRE LA DIFF ENTRE "/quit <CHANNNEL>" ET "/quit" 
-   		if ( strcmp(user_input, "/quit") == 0 || strcmp(user_input, "/quit ") == 0 )
+   		if ( (strcmp(user_input, "/quit") == 0 && in_channel == 0) || (strcmp(user_input, "/quit ") == 0 && in_channel == 0) )
    			type = ECHO_SEND;
-   		else if (strlen(user_input) > strlen("/quit ") && in_channel == 1)
-   			if (strcmp(user_input+strlen("/quit "), my_channel) == 0 )
-   				type = MULTICAST_QUIT;
+   		else 
+   			type = MULTICAST_QUIT;
    	}		
 	
 	else {
@@ -367,9 +368,6 @@ int prepare_message(struct message *msg, char *user_input, const char *nick_send
 	}
 	/////////////////////////////////////////////////////////////////////
 	/////////////////////////////////////////////////////////////////////
-
-
-
 
 	ret = valid_format(type, user_input);
    	if (ret == -1) {
@@ -415,7 +413,7 @@ int send2steps(int fd, struct message msg, const char *payload) {
    		sent += ret;
     }
 	
-	if (msg.type != NICKNAME_LIST)	{
+	if (msg.type != NICKNAME_LIST && msg.type != MULTICAST_LIST)	{
 	//	Envoi du payload 
 		sent = 0;
 		while (sent != msg.pld_len) {
@@ -427,7 +425,7 @@ int send2steps(int fd, struct message msg, const char *payload) {
 			sent += ret;
 		}	
 	}
-
+	
 	return 0; // succès
 }
 
@@ -448,7 +446,7 @@ int receive2steps(int fd, struct message *msg, char **payload) {
 		
 	int payload_size = msg->pld_len;
 
-	*payload = (char *)malloc(payload_size);
+	*payload = (char *)malloc(payload_size+1);
 	if (*payload == NULL) {
 		return -2; // Pour différencier du retour d'erreur du read
 	}
@@ -514,7 +512,7 @@ int initialNickname(int fd, char **my_nickname) {
 		}
 		
 		if (*(user_input + strlen("/nick")) != ' ') {
-	    	printf("[Server] : Please add a space between \"/nick\" and your username.\n");
+	    	printf("[Server] : Please add a space between \"/nick\" and your nickname.\n");
 	   		continue;
 	   	}
 
@@ -541,7 +539,7 @@ int initialNickname(int fd, char **my_nickname) {
    		msg.nick_sender[0] = '\0';
 		msg.pld_len = strlen(user_input + strlen("/nick "));
 		strcpy(msg.infos, user_input + strlen("/nick "));
-		
+
 		// Envoi du pseudo
 		int ret = send2steps(fd, msg, user_input + strlen("/nick "));
 		if (ret == -1) {
@@ -571,6 +569,184 @@ int initialNickname(int fd, char **my_nickname) {
 
 
 
+void initializeConnection(int *fd, struct addrinfo **result, const char *server_name, const char *server_port){
+	
+	struct addrinfo hints;
+	memset(&hints, 0, sizeof(struct addrinfo));
+	hints.ai_family = AF_UNSPEC;
+	hints.ai_socktype = SOCK_STREAM;
+	
+	int ret = getaddrinfo(server_name, server_port, &hints, result);
+    if (ret == -1) {
+        perror("getaddrinfo");
+        exit(EXIT_FAILURE);
+    }
+
+    *fd = socket((*result)->ai_family, (*result)->ai_socktype, (*result)->ai_protocol);
+    if (*fd == -1) {
+        perror("socket");
+        freeaddrinfo(*result);
+        exit(EXIT_FAILURE);
+    }
+
+	ret = connect(*fd, (*result)->ai_addr, (*result)->ai_addrlen);
+	if (ret == -1) {
+		perror("connect");
+		close(*fd); 
+		freeaddrinfo(*result);
+		exit(EXIT_FAILURE);
+	}
+	
+	 // Reception du flag de confirmation
+    int received = 0;
+    char buf_flag[1];
+    while (received != sizeof(char)) {
+        ret = read(*fd, buf_flag + received, sizeof(char) - received);
+        if (ret == -1) {
+            perror("read");
+            close(*fd);
+            freeaddrinfo(*result);
+            exit(EXIT_FAILURE); // Erreur de lecture
+        }
+        received += ret;
+    }
+
+    if (strcmp(buf_flag, "1") == 0) {
+        printf("Server has reached maximum user capacity.\n");
+        close(*fd);
+        freeaddrinfo(*result);
+        exit(EXIT_FAILURE);
+    }
+
+    printf("Connecting to server ... done!\n");
+}
+
+
+
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////// Les fonctions handleX(...) s'occupent du traitement des messages reçus du serveur////////////////
+
+
+// Cette fonction affiche le message d'erreur correspondant à la réponse du serveur pour une démande de création de salon
+void handleMulticastCreate(const char *payload, char *my_channel, const char *input_buffer, int* in_channel, int* new_channel) {
+    
+    if (strcmp(payload, "0") == 0) {
+    	strcpy(my_channel, input_buffer + strlen("/create "));
+		*in_channel = 1;
+		*new_channel = 1;
+    }
+    
+    else if (strcmp(payload, "1") == 0) {
+        printf("[Server] : Channel name already taken. Please try again.\n");
+    }
+    
+    else if (strcmp(payload, "2") == 0) {
+        printf("[Server] : The server has reached its maximum channel capacity. Please try again later.\n");
+    }
+}
+
+// Cette fonction affiche la liste des salons créés
+void handleMulticastList(const char *payload, char *list_channel, const char *my_nickname, const char *my_channel) {
+    if (payload[0] == '\0') {
+        printf("[Server] : There are not any channels available.\n");
+    } else {
+        strcpy(list_channel, "[Server] : Existing channels are :");
+
+        int idx_payload = 0, idx_name = 0;
+        char name_channel[CHANNEL_NAME_LEN];
+
+        while (payload[idx_payload] != '.') {
+            strcat(list_channel, "\n    - ");
+
+            memset(name_channel, 0, sizeof(name_channel));
+            idx_name = 0;
+
+            while (payload[idx_payload] != ',' && payload[idx_payload] != '.') {
+                name_channel[idx_name] = payload[idx_payload];
+                idx_name += 1;
+                idx_payload += 1;
+            }
+
+            strcat(list_channel, name_channel);
+            
+			// Pour afficher un indicateur sur le salon auquel il appartient
+            if (strcmp(name_channel, my_channel) == 0)
+                strcat(list_channel, " (your channel)");
+			
+            // Pour passer à la position après le séparateur ", "
+            if (payload[idx_payload] == ',')
+                idx_payload += 2;
+        }
+
+        printf("%s\n", list_channel);
+    }
+}
+
+
+
+// Cette fonction affiche le message d'erreur correspondant à la réponse du serveur pour une demande de rejoindre un salon, et stocke le nom du salon.
+void handleMulticastJoin(struct message msg, char *input_buffer, const char *payload, const char *my_nickname, char *my_channel, int* in_channel, int* just_joined) {
+    
+    if (strcmp(msg.nick_sender, my_nickname) == 0) {
+    
+        if (strcmp(payload, "0") == 0) {
+            strcpy(my_channel, input_buffer + strlen("/join "));
+            *in_channel = 1;
+            *just_joined = 1;
+        }
+        
+        else if (strcmp(payload, "1") == 0) 
+            printf("[Server] : Cannot join %s. You are already in this channel.\n", my_channel);
+        
+        else if (strcmp(payload, "2") == 0)
+            printf("[Server] : %s is not an existing channel name.\nThe list of all existing channels can be acquired using the command \"/channel_list\"\n.", input_buffer + strlen("/join "));
+        
+        else if (strcmp(payload, "3") == 0)
+            printf("[Server] : %s has reached its maximum members capacity. Please try again later.\n", input_buffer + strlen("/join "));
+    }
+    	else
+			printf("\n%s[%s]> INFO> %s\n", my_nickname, my_channel, payload);
+    	
+}
+
+
+
+// Cette fonction affiche le message d'erreur correspondant à la réponse du serveur pour une démande de quitter un salon, et réinitialise les variables associées au salon si besoin
+void handleMulticastQuit(struct message msg, char* input_buffer, const char *payload, const char *my_nickname, char *my_channel, int* in_channel) {
+   
+    if (strcmp(payload, "0") == 0) {
+        //printf("INFO> You have left %s\n", my_channel);
+        *in_channel = 0;    // Réinitialisation des variables associées au salon
+        my_channel[0] = '\0';
+    }
+    
+    else if (strcmp(payload, "1") == 0) {
+        printf("[Server] : %s is not an existing channel name.\nThe list of all existing channels can be acquired using the command \"/channel_list\"\n.", input_buffer + strlen("/quit "));
+    }
+    
+    else if (strcmp(payload, "2") == 0) {
+        printf("[Server] : You are not part of %s channel. You can only quit your own channel : %s\n", input_buffer + strlen("/quit "), my_channel);
+    }
+    
+    else if (strlen(payload) > 1) {
+        // Cas où le client est à l'origine de la demande de départ : On vérifie que le payload est bien une notification de destruction de salon
+        char notification[strlen(my_nickname)+ strlen("You were the last user in this channel,  has been destroyed\n")];
+		strcpy(notification, "You were the last user in this channel, ");
+		strcat(notification, my_channel);
+		strcat(notification, " has been destroyed");
+		if (strcmp(payload, notification) == 0) {
+			printf("%s> INFO> %s\n", my_nickname, payload);
+			*in_channel = 0; // Réinitialisation des variables associées au salon
+			my_channel[0] = '\0';
+		}
+		else // Cas où il s'agit d'un client qui est notifié du départ
+        	printf("\n%s[%s]> INFO> %s\n", my_nickname, my_channel, payload);
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 
 
@@ -586,64 +762,23 @@ int main(int argc, char *argv[]) {
         exit(EXIT_FAILURE);
     }
 	
-	struct addrinfo hints, *result;
-	memset(&hints, 0, sizeof(struct addrinfo));
-	hints.ai_family = AF_UNSPEC;
-	hints.ai_socktype = SOCK_STREAM;
-	
-	int ret = getaddrinfo(argv[1], argv[2], &hints, &result); // renvoie 0 si succès
-	if (ret != 0) {
-		perror("getaddrinfo");
-		freeaddrinfo(result);
-		exit(EXIT_FAILURE);
-	}
-	
-	int fd = socket(result->ai_family, result->ai_socktype, result->ai_protocol);
-	if (fd == -1) {
-		perror("socket"); 
-		freeaddrinfo(result); 
-		exit(EXIT_FAILURE);
-	}
-	
-	ret = connect(fd, result->ai_addr, result->ai_addrlen);
-	if (ret == -1) {
-		perror("connect");
-		close(fd); 
-		freeaddrinfo(result);
-		exit(EXIT_FAILURE);
-	}
-	
-	int received = 0;
-	char buf_flag[1];
-	while (received != sizeof(char)) {
-		// Réception de la structure dans un premier temps	
-		int ret = read(fd, buf_flag + received, sizeof(char) - received);
-		if (ret == -1) {
-			perror("read");
-			close(fd);
-			exit(EXIT_FAILURE); // Erreur de lecture
-		}
-		received += ret;
-   	}
-	printf("Connecting to server ... done!\n");
-	
+	int fd = -1;
+	struct addrinfo *result;
 
+	initializeConnection(&fd, &result, argv[1], argv[2]);
+	
 	char *my_nickname = NULL; // stocke le pseudo de l'utilisateur
 	int nicknew_count = 0; // compteur utilisé pour distinguer le choix initial du pseudo des changements de pseudos
 
 	// Choix du pseudo avant le début de la boucle principale
-	ret = initialNickname(fd, &my_nickname);
+	int ret = initialNickname(fd, &my_nickname);
 	if (ret == -1) {
 		perror("write");
 		close(fd);
 		free(my_nickname);
 		exit(EXIT_FAILURE);
 	}
-	
-	
-		
 
-		
 	/////////////////////////////////////////////////////////////////////
 	//////////////////   JALON 3 : MULTICAST   //////////////////////////
 	char *my_channel = NULL; // stocke le nom du salon de discussion
@@ -654,13 +789,13 @@ int main(int argc, char *argv[]) {
     	free(my_nickname);
     	exit(EXIT_FAILURE);
 	}
+	my_channel[0] = '\0';
 	
 	int in_channel = 0; // 1 si l'utilisateur est dans un salon, 0 sinon
+	int new_channel = 0; // 1 si un canal vient d'être crée, 0 sinon : pour gérer l'affichage des prompt adéquats
+	int just_joined = 0; // pour gérer l'affichage des prompts entre le client qui rejoins et les clients notifiés de son arrivée
 	/////////////////////////////////////////////////////////////////////
 	/////////////////////////////////////////////////////////////////////
-
-
-
 
 
 	struct pollfd fds[2]; // Un descr. pour l'entrée, l'autre (fd) pour la socket 
@@ -672,22 +807,33 @@ int main(int argc, char *argv[]) {
 	fds[1].events = POLLIN;
 	fds[1].revents = 0;
 	
-
-	
-	//printf("%s> ", my_nickname);  // Affichage du pseudo de l'utilisateur avant chaque commande
-	//fflush(stdout);
-	
+	int waiting_stage = 1; // permet de gérer l'affichage du prompt sur la ligne de commande
 	while (1) {
-		
 		// Affichage du pseudo et salon de l'utilisateur avant chaque commande
-		if (in_channel == 1){
+		if (in_channel == 1 && waiting_stage){
+			// Cas où le client est à l'origine de la demande de création d'un salon
+			if (new_channel){
+				printf("%s> ", my_nickname);
+				fflush(stdout);
+				printf("You have created channel %s\n", my_channel);
+				printf("%s[%s]> You have joined %s\n", my_nickname, my_channel, my_channel);  	
+				new_channel = 0;
+			}
+			
+			// Cas où le client est à l'origine de la demande de rejoindre un salon
+			if (just_joined){
+				printf("%s[%s]> INFO> You have joined %s\n", my_nickname, my_channel, my_channel);
+				just_joined = 0;	
+			}
+			
 			printf("%s[%s]> ", my_nickname, my_channel);  	
 			fflush(stdout);
 		}
-		else {
+		else if (waiting_stage) {
 			printf("%s> ", my_nickname);
 			fflush(stdout);
 		}
+		
 		
 		int ret = poll(fds, 2, -1); // Call poll that awaits new events
 
@@ -697,7 +843,7 @@ int main(int argc, char *argv[]) {
 		}
 		
 		char input_buffer[256];
-
+				
 		if (fds[0].revents & POLLIN) { // Activité sur stdin
 		 	// Lire stdin et envoyer au serveur
 		  	if (fgets(input_buffer, sizeof(input_buffer), stdin) == NULL) {
@@ -705,13 +851,18 @@ int main(int argc, char *argv[]) {
  				break;
 			}
 		    input_buffer[strlen(input_buffer)-1]='\0'; // retrait du \n	   
-		   	
-		   	/************** Fonctionnalité supplémentaire : l'utilisateur peut connaître son username*******/
-			/*                                              via la commande /me                            */		   
+		   	/************** Fonctionnalités supplémentaires : l'utilisateur peut connaître son pseudo et le salon auquel il appartient, via les commandes /me et /mychannel, respectivement *******/
+			/*                                                                        */		   
 		   	if (strcmp(input_buffer, "/me") == 0 || strcmp(input_buffer, "/me ") == 0) {
-         		printf("[Server] : You are : %s\n", my_nickname);
+         		printf("[Server] : You are %s\n", my_nickname);
          		continue;
-         	}	
+         	}
+         	
+         	if (strcmp(input_buffer, "/mychannel") == 0 || strcmp(input_buffer, "/mychannel ") == 0) {
+         		printf("[Server] : You are in %s channel\n", my_channel);
+         		continue;
+         	}
+    			
          	/***********************************************************************************************/
 		   	
 		   	struct message msg;
@@ -720,15 +871,26 @@ int main(int argc, char *argv[]) {
 		   	// Remplissage msg
 		   	int res = prepare_message(&msg, input_buffer, my_nickname, payload, my_channel, in_channel);
 			
+			// Cas d'une demande de déconnexion au mauvais format
+			if ((strncmp(input_buffer, "/quit", strlen("/quit")) == 0 && strlen(input_buffer) > strlen("/quit") && in_channel == 0) 
+         	|| (strncmp(input_buffer, "/quit ", strlen("/quit ")) == 0 && strlen(input_buffer) > strlen("/quit ") && in_channel == 0)) {
+         		printf("You are not currently in a channel. To quit the server, please use \"/quit\".\n");
+         		continue;
+         	}
+			
+			
 			if (res == 0) {
-				send2steps(fds[1].fd, msg, payload);				
+				send2steps(fds[1].fd, msg, payload);
+				if(msg.type != BROADCAST_SEND && msg.type != MULTICAST_SEND)
+					waiting_stage = 0;				
 			}
          	
          	// Cas d'une demande de déconnexion.
-		   	if ( strcmp(payload, "/quit") == 0  || strcmp(payload, "/quit ") == 0 ) {
+		   	if ( (strcmp(payload, "/quit") == 0 && in_channel == 0) || (strcmp(payload, "/quit ") == 0 && in_channel == 0) ) {
          		printf("[Server] : Request successful. You have been disconnected.\n");
             	break;
          	}
+         	
          	
          	fds[0].revents = 0;
 		}
@@ -749,7 +911,7 @@ int main(int argc, char *argv[]) {
 				free(my_nickname);
 				exit(EXIT_FAILURE);
 			}
-			
+
 			int type = msg.type;
 			switch (type) {
 				
@@ -758,12 +920,12 @@ int main(int argc, char *argv[]) {
 						nicknew_count += 1;
 						
 						if (nicknew_count >= 1){ // Pour différencier le premier choix de pseudo et les changements ultérieurs
-						strcpy(my_nickname, input_buffer);
-						printf("[Server] : Nickname successfully changed to %s !\n", my_nickname + strlen("/nick "));
+						strcpy(my_nickname, input_buffer + strlen("/nick "));
+						printf("[Server] : Nickname successfully changed to %s !\n", my_nickname);
 						}
 					}					
 					else if (strcmp(payload, "1") == 0)
-						printf("[Server] : Nickname already taken, please try again.\n");					
+						printf("[Server] : Nickname already taken. Please try again.\n");					
 					break;				
 
 				case NICKNAME_LIST:
@@ -787,7 +949,7 @@ int main(int argc, char *argv[]) {
 						
 						// Pour afficher son propre pseudo
 						if (strcmp(name_nickname, my_nickname) == 0)
-							strcat(list_nickname, " (me)");
+							strcat(list_nickname, " (you)");
 						
 						// Pour passer à la position après le séparateur ", "
 						if (payload[idx_payload] == ',')
@@ -819,107 +981,38 @@ int main(int argc, char *argv[]) {
 				//////////////////   JALON 3 : MULTICAST   //////////////////////////
 
 				case MULTICAST_CREATE:
-				
-					if (strcmp(payload, "0") == 0) {
-						printf("You have created channel %s\n", my_channel + strlen("/create "));
-						strcpy(my_channel, input_buffer);
-						printf("You have joined %s\n", my_channel + strlen("/create "));		
-					}					
-					else if (strcmp(payload, "1") == 0)
-						printf("Channel name already taken, please try again.\n");		
-					else if (strcmp(payload, "2") == 0)
-						printf("Server has reached maximum channel capacity. Please try again.\n");
+					
+					handleMulticastCreate(payload, my_channel, input_buffer, &in_channel, &new_channel);
 					break;
 			
 				case MULTICAST_LIST:
-					if (payload[0] == '\0')
-				        printf("No channels available.\n");						
-					else {
-						char list_channel[CHANNEL_NAME_LEN*MAX_CHANNELS + 14];
-						strcpy(list_channel, "List of created channels :");
-						
-						idx_payload = 0, idx_name = 0; 
-						char name_channel[CHANNEL_NAME_LEN];
-						while (payload[idx_payload] != '.') {
-							strcat(list_channel, "\n			- ");
-							
-							memset(name_channel, 0, sizeof(name_channel));
-							idx_name = 0;
-							while( payload[idx_payload] != ',' && payload[idx_payload] != '.' ) {
-								name_channel[idx_name] = payload[idx_payload];
-								idx_name+=1;
-								idx_payload+=1; 
-							}
-							strcat(list_channel, name_channel);
-							if (strcmp(name_channel, my_nickname) == 0)
-								strcat(list_channel, " (<--)");
-							
-							
-							
-							// Pour passer à la position après le séparateur ", "
-							if (payload[idx_payload] == ',')
-								idx_payload += 2; 
-						}
-						printf("%s\n", list_channel);
-					}
 					
+					char list_channel[CHANNEL_NAME_LEN*MAX_CHANNELS + 14];					
+					handleMulticastList(payload, list_channel, my_nickname, my_channel);
 					break;
 
 				case MULTICAST_JOIN:
-					if (strcmp(msg.nick_sender, my_nickname) == 0)
-					{
-						if (strcmp(payload, "0") == 0) {
-							strcpy(my_channel, input_buffer);
-							in_channel = 1;
-							printf("INFO> You have joined %s\n", my_channel + strlen("/join "));		
-						}
-						else if (strcmp(payload, "1") == 0)		///////// à revoir avec serveur
-							printf("INFO> You are already in this channel.\n");							
-						else if (strcmp(payload, "2") == 0) 
-					 		printf("INFO> This channel does not exist. Please try again\n");
-						else if (strcmp(payload, "3") == 0) 
-					 		printf("INFO> Channel has reached maximum number of users. Please try again.\n");
-					}
-
-					else 
-						printf("INFO> %s has joined %s\n", msg.nick_sender, my_channel + strlen("/join "));
+					
+					handleMulticastJoin(msg, input_buffer, payload, my_nickname, my_channel, &in_channel, &just_joined);
 					break;
 					
 				case MULTICAST_SEND:
-					if (strlen(payload) > 1) {
-						printf("%s> : %s\n", msg.nick_sender, payload); 
-					}
+				
+					printf("%s[%s]> %s> : %s\n", my_nickname, my_channel, msg.nick_sender, payload);
 					break;
 				
 				case MULTICAST_QUIT:
-					if (strcmp(msg.nick_sender, my_nickname) == 0) {
-						
-						if (strcmp(payload, "oh gosh") == 0)
-							printf("You were the last user in this channel, %s has been destroyed\n", my_channel);				
-						
-						else if (strcmp(payload, "you're so big") == 0)
-							printf("INFO> You have left %s\n", my_channel);
-        		        
-        		        // Réinitialisation
-        		        in_channel = 0;
-        		        my_channel[0] = '\0';
-					}
 					
-					else						
-						printf("INFO> : %s has quit %s\n", msg.nick_sender, my_channel);						
-					
-					break;
-			
-				/////////////////////////////////////////////////////////////////////
-				/////////////////////////////////////////////////////////////////////						
-			
-			}
+					handleMulticastQuit(msg, input_buffer, payload, my_nickname, my_channel, &in_channel);					
+					break;					
+			} // switch/case
 			
 			free(payload);
 			fds[1].revents = 0;
-		}
+			waiting_stage = 1;
+		} // if activité serveur
       
-	}
+	} // while (1)
 	
 	free(my_nickname);
 	free(my_channel);
@@ -927,4 +1020,4 @@ int main(int argc, char *argv[]) {
 	close (fds[1].fd);
 	printf("Have a nice day :)\n");
 	return 0;	
-}
+} // main
